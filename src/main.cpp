@@ -56,10 +56,12 @@ void setupWifi()
 }
 
 
+#define PARAM_STEP "step"
 #define PARAM_UP "up"
 #define PARAM_DOWN "down"
 #define PARAM_ON "on"
 #define PARAM_OFF "off"
+#define PARAM_TOGGLE "toggle"
 
 
 void handleRoot(AsyncWebServerRequest *request)
@@ -75,40 +77,47 @@ void handleNotFound(AsyncWebServerRequest *request)
 
 void handleBrightness(AsyncWebServerRequest *request)
 {
-  if (request->hasParam(PARAM_ON))
+  if (request->hasParam(PARAM_ON)||request->hasParam(PARAM_OFF)||request->hasParam(PARAM_TOGGLE))
   {
-    FastLED.setBrightness(currentBrightness);
-    FastLED.show();
+    boolean on = request->hasParam(PARAM_ON);
+    if (request->hasParam(PARAM_TOGGLE)){
+      on = FastLED.getBrightness()==0;
+    }    
     String message = "Set brightness to: ";
-    message.concat(currentBrightness);
-    message.concat(" saving current brightness");
-    Serial.println (message);
-    request->send(200, "text/plain", message);
-  }else if (request->hasParam(PARAM_OFF))
-  {
-    FastLED.setBrightness(0);
-    FastLED.show();
-    String message = "Set brightness to: 0, saving current brightness";
+    if (on)
+    {
+      FastLED.setBrightness(currentBrightness);
+      message.concat(currentBrightness);
+    }else
+    {
+      FastLED.setBrightness(0);
+      message.concat(0);
+    }
     Serial.println (message);
     request->send(200, "text/plain", message);
   }
   else{
-    if (request->hasParam(PARAM_UP) && currentBrightness<BRIGHTNESS_MAX)
+    uint8_t step=1;
+    if (request->hasParam(PARAM_STEP) && currentBrightness+step<=BRIGHTNESS_MAX)
     {
-      currentBrightness++;
+           step = request->getParam(PARAM_STEP)->value().toInt();
+    }    
+    if (request->hasParam(PARAM_UP) && currentBrightness+step<=BRIGHTNESS_MAX)
+    {
+      currentBrightness+=step;
     }
-    else if (request->hasParam(PARAM_DOWN) && currentBrightness>BRIGHTNESS_MIN)
+    else if (request->hasParam(PARAM_DOWN) && currentBrightness-step>=BRIGHTNESS_MIN)
     {
-      currentBrightness--;
+      currentBrightness-=step;
     }
     FastLED.setBrightness(currentBrightness);
-    FastLED.show();
     String message = "Set brightness to: ";
     message.concat(currentBrightness);
     Serial.println (message);
     request->send(200, "text/plain", message);
   }
 }
+
 
 
 
@@ -124,10 +133,11 @@ void setupServer()
 void setupLights(){
  for (int i = 0; i < NUMLEDS; i++)
   {
-    leds[i] = CRGB::Green;
-    Serial.println(i);
+    leds[i] = CRGB::White;
   }
   FastLED.addLeds<LED_TYPE, LEDPIN,COLOR_ORDER>(leds, sizeof(leds));
+  FastLED.setBrightness(currentBrightness);
+  delay (3000);
 }
 
 void writeRelays(){
@@ -144,6 +154,10 @@ void setup() {
   setupServer();
   setupLights();
   Serial.println("Setup done");
+  Serial.print("FPS:");
+  Serial.println(FastLED.getFPS());
+  
+  
  } 
 
 void nextRelayState(){
@@ -169,7 +183,7 @@ void nextRelayState(){
 
 
 void loop() {
-  delay(500);
+  delay(100);
   FastLED.show();
 }
 
