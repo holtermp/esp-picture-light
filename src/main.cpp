@@ -9,31 +9,50 @@
 #include <ESPAsyncWebServer.h>
 #include <pins_arduino.h>
 #include "wifi_secrets.h"
-#include <FastLED.h>
+#include <Adafruit_NeoPixel.h>
 #include <pins_arduino.h>
 
-#define LEDPIN    D3
-#define LED_TYPE    WS2811
+#define LED_PIN    D3
+//DELETEIFNOLONGERNEEDED #define LED_TYPE    WS2811
 //#define LED_TYPE PL9823
-#define COLOR_ORDER GRB
+
 #define NUMLEDS  255
 
-#define BRIGHTNESS_INITIAL  128
+
+// Declare our NeoPixel strip object:
+Adafruit_NeoPixel strip(NUMLEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+// Argument 1 = Number of pixels in NeoPixel strip
+// Argument 2 = Arduino pin number (most are valid)
+// Argument 3 = Pixel type flags, add together as needed:
+//   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
+//   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
+//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
+//   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
+//   NEO_RGBW    Pixels are wired for RGBW bitstream (NeoPixel RGBW products)
+
+
+uint32_t colorStore[NUMLEDS];
+
+
+
+#define BRIGHTNESS_INITIAL  64
 #define BRIGHTNESS_MAX  255
 #define BRIGHTNESS_MIN  0
 
+#define HUE_INITIAL  2000
+#define SAT_INITIAL  128
+
+u_int16_t currentHue=HUE_INITIAL ;
+u_int8_t currentSat=SAT_INITIAL;
 u_int8_t currentBrightness  = BRIGHTNESS_INITIAL;
 
 #define RELAY1PIN D5
 #define RELAY2PIN D6
 
 
-#define BRIGHTNESS  128
 
 u_int8_t relay1State = LOW;
 u_int8_t relay2State = LOW;
-
-CRGB leds[NUMLEDS];
 
 AsyncWebServer server(80);
 
@@ -75,22 +94,45 @@ void handleNotFound(AsyncWebServerRequest *request)
   request->send(404, "text/plain", "Not found");
 }
 
+
+void saveCurrentColors(){
+  for(int c=0; c < NUMLEDS;c++) {
+    colorStore[c]=strip.getPixelColor(c);
+  }
+}
+
+void restoreSavedColors(){
+  for(int c=0; c < NUMLEDS;c++) {
+    strip.setPixelColor(c,colorStore[c]);
+  }
+}
+
+void updateHueSat(){
+  for(int c=0; c < NUMLEDS;c++) {
+    strip.setPixelColor(c,Adafruit_NeoPixel::ColorHSV(currentHue,currentSat,currentBrightness));
+  }
+}
+
+
+
 void handleBrightness(AsyncWebServerRequest *request)
 {
   if (request->hasParam(PARAM_ON)||request->hasParam(PARAM_OFF)||request->hasParam(PARAM_TOGGLE))
   {
     boolean on = request->hasParam(PARAM_ON);
     if (request->hasParam(PARAM_TOGGLE)){
-      on = FastLED.getBrightness()==0;
+      on = strip.getBrightness()==0;
     }    
     String message = "Set brightness to: ";
     if (on)
     {
-      FastLED.setBrightness(currentBrightness);
+      strip.setBrightness(currentBrightness);
+      restoreSavedColors();
       message.concat(currentBrightness);
     }else
-    {
-      FastLED.setBrightness(0);
+    { 
+      saveCurrentColors();
+      strip.setBrightness(0);
       message.concat(0);
     }
     Serial.println (message);
@@ -110,14 +152,61 @@ void handleBrightness(AsyncWebServerRequest *request)
     {
       currentBrightness-=step;
     }
-    FastLED.setBrightness(currentBrightness);
+    strip.setBrightness(currentBrightness);
     String message = "Set brightness to: ";
     message.concat(currentBrightness);
     Serial.println (message);
     request->send(200, "text/plain", message);
   }
+  strip.show();
 }
 
+
+void handleHue(AsyncWebServerRequest *request)
+{
+    uint8_t step=1;
+    if (request->hasParam(PARAM_STEP))
+    {
+           step = request->getParam(PARAM_STEP)->value().toInt();
+    }    
+    if (request->hasParam(PARAM_UP))
+    {
+      currentHue+=step;
+    }
+    else if (request->hasParam(PARAM_DOWN))
+    {
+      currentHue-=step;
+    }
+    updateHueSat();
+    String message = "Set hue to: ";
+    message.concat(currentHue);
+    Serial.println (message);
+    request->send(200, "text/plain", message);
+    strip.show();
+}
+
+void handleSat(AsyncWebServerRequest *request)
+{
+    uint8_t step=1;
+    if (request->hasParam(PARAM_STEP))
+    {
+           step = request->getParam(PARAM_STEP)->value().toInt();
+    }    
+    if (request->hasParam(PARAM_UP))
+    {
+      currentSat+=step;
+    }
+    else if (request->hasParam(PARAM_DOWN))
+    {
+      currentHue-=step;
+    }
+    updateHueSat();
+    String message = "Set sat to: ";
+    message.concat(currentSat);
+    Serial.println (message);
+    request->send(200, "text/plain", message);
+    strip.show();
+}
 
 
 
@@ -125,19 +214,19 @@ void setupServer()
 {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/brightness", HTTP_GET, handleBrightness);
+  server.on("/hue", HTTP_GET, handleHue);
+  server.on("/sat", HTTP_GET, handleSat);
   server.onNotFound(handleNotFound);
   server.begin();
 }
 
-
-void setupLights(){
- for (int i = 0; i < NUMLEDS; i++)
-  {
-    leds[i] = CRGB::White;
-  }
-  FastLED.addLeds<LED_TYPE, LEDPIN,COLOR_ORDER>(leds, sizeof(leds));
-  FastLED.setBrightness(currentBrightness);
-  delay (3000);
+void setupLights() {
+  strip.begin();           // INITIALIZE NeoPixel strip object (REQUIRED)
+  strip.show();            // Turn OFF all pixels ASAP
+  strip.clear();
+  strip.setBrightness(currentBrightness);
+  updateHueSat();
+  strip.show();
 }
 
 void writeRelays(){
@@ -154,11 +243,7 @@ void setup() {
   setupServer();
   setupLights();
   Serial.println("Setup done");
-  Serial.print("FPS:");
-  Serial.println(FastLED.getFPS());
-  
-  
- } 
+} 
 
 void nextRelayState(){
 
@@ -183,8 +268,7 @@ void nextRelayState(){
 
 
 void loop() {
-  delay(100);
-  FastLED.show();
+  delay(1000);  
 }
 
 
