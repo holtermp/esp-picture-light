@@ -137,6 +137,7 @@ void handleBrightness(AsyncWebServerRequest *request)
     {
       restoreSavedColors();
       strip.setBrightness(currentBrightness);
+      updateHueSat();
       message.concat(currentBrightness);
     }
     else
