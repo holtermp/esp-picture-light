@@ -56,8 +56,8 @@ const char *password = MY_PW;
 boolean autoHue = false;
 boolean autoSat = false;
 
-#define AUTO_HUE_CHANGE_STEP 350
-#define AUTO_SAT_CHANGE_STEP 8
+#define AUTO_HUE_CHANGE_STEP 100
+#define AUTO_SAT_CHANGE_STEP 2
 
 void setupWifi()
 {
@@ -245,12 +245,55 @@ void handleSat(AsyncWebServerRequest *request)
   strip.show();
 }
 
+
+#define RELAY_RUN_TIME_MS 45000
+long relayTimeLeftMs=0L;
+
+void writeRelays()
+{
+  digitalWrite(RELAY1PIN, !relay1State);
+  digitalWrite(RELAY2PIN, !relay2State);
+}
+
+void handleScreenRequest(AsyncWebServerRequest *request)
+{
+  String message = "";
+  if (request->hasParam(PARAM_UP)||request->hasParam(PARAM_DOWN))
+  {
+    if (relay1State == HIGH || relay2State==HIGH) {
+      message.concat("Relay operation still in progress, time left (ms) ");
+      message.concat(relayTimeLeftMs);
+    }
+    else {
+      message.concat("Setting relay to high: ");
+     
+      if (request->hasParam(PARAM_UP)){
+        message.concat("UP");
+        relay1State=HIGH;
+      }
+      else {
+        message.concat("UP");
+        relay2State=HIGH;
+      }
+      relayTimeLeftMs = RELAY_RUN_TIME_MS;
+      message.concat(", time left (ms) ");
+      message.concat(relayTimeLeftMs);
+      writeRelays();
+    }
+
+  }
+  
+  Serial.println(message);
+  request->send(200, "text/plain", message);
+}
+
 void setupServer()
 {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/brightness", HTTP_GET, handleBrightness);
   server.on("/hue", HTTP_GET, handleHue);
   server.on("/sat", HTTP_GET, handleSat);
+  server.on("/screen", HTTP_GET, handleScreenRequest);
   server.onNotFound(handleNotFound);
   server.begin();
 }
@@ -263,12 +306,6 @@ void setupLights()
   strip.setBrightness(currentBrightness);
   updateHueSat();
   strip.show();
-}
-
-void writeRelays()
-{
-  digitalWrite(RELAY1PIN, !relay1State);
-  digitalWrite(RELAY2PIN, !relay2State);
 }
 
 void setup()
@@ -305,9 +342,24 @@ void nextRelayState()
   writeRelays();
 };
 
+#define DELAY_TIME_MS 25
+void handleRelays(){
+  if(relayTimeLeftMs>0){
+    relayTimeLeftMs-=DELAY_TIME_MS;
+    if(relay1State==HIGH ||relay2State==HIGH){
+      if(relayTimeLeftMs<=0){
+        Serial.println("Switching off relays");
+        relay1State=LOW;
+        relay2State=LOW;
+        writeRelays();
+      }
+    }
+   }
+}
+
 void loop()
 {
-  delay(100);
+  delay(DELAY_TIME_MS);
   if (autoHue || autoSat)
   {
     if (autoHue)
@@ -321,4 +373,5 @@ void loop()
     updateHueSat();
     strip.show();
   }
+  handleRelays();
 }
