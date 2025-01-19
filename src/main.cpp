@@ -94,7 +94,7 @@ void handleNotFound(AsyncWebServerRequest *request)
 
 void saveCurrentColors()
 {
-  for (int c = 0; c < NUMLEDS; c++)
+  for (u_int16_t c = 0; c < strip.numPixels(); c++)
   {
     colorStore[c] = strip.getPixelColor(c);
   }
@@ -102,7 +102,7 @@ void saveCurrentColors()
 
 void restoreSavedColors()
 {
-  for (int c = 0; c < NUMLEDS; c++)
+  for (u_int16_t c = 0; c < strip.numPixels(); c++)
   {
     strip.setPixelColor(c, colorStore[c]);
   }
@@ -245,9 +245,34 @@ void handleSat(AsyncWebServerRequest *request)
   strip.show();
 }
 
+boolean pulse = false;
+
+void handlePulse(AsyncWebServerRequest *request)
+{
+  String message = "";
+  if (request->hasParam(PARAM_ON))
+  {
+    message = ("Set pulse to:true");
+    pulse = true;
+  }
+  else if (request->hasParam(PARAM_OFF))
+  {
+    message = ("Set pulse to:false");
+    pulse = false;
+  }
+  else if (request->hasParam(PARAM_TOGGLE))
+  {
+    pulse = !pulse;
+    message = ("Toggled pulse to:");
+    message.concat(pulse);
+  }
+  Serial.println(message);
+  request->send(200, "text/plain", message);
+  strip.show();
+}
 
 #define RELAY_RUN_TIME_MS 45000
-long relayTimeLeftMs=0L;
+long relayTimeLeftMs = 0L;
 
 void writeRelays()
 {
@@ -258,31 +283,42 @@ void writeRelays()
 void handleScreenRequest(AsyncWebServerRequest *request)
 {
   String message = "";
-  if (request->hasParam(PARAM_UP)||request->hasParam(PARAM_DOWN))
+  if (request->hasParam(PARAM_UP) || request->hasParam(PARAM_DOWN))
   {
-    if (relay1State == HIGH || relay2State==HIGH) {
-      message.concat("Relay operation still in progress, time left (ms) ");
-      message.concat(relayTimeLeftMs);
-    }
-    else {
-      message.concat("Setting relay to high: ");
-     
-      if (request->hasParam(PARAM_UP)){
-        message.concat("UP");
-        relay1State=HIGH;
-      }
-      else {
-        message.concat("UP");
-        relay2State=HIGH;
-      }
-      relayTimeLeftMs = RELAY_RUN_TIME_MS;
-      message.concat(", time left (ms) ");
-      message.concat(relayTimeLeftMs);
-      writeRelays();
-    }
 
+    if (request->hasParam(PARAM_UP))
+    {
+      if(relay1State!=HIGH)
+       relayTimeLeftMs = RELAY_RUN_TIME_MS;
+      message.concat("Setting relay to high: UP");
+      relay1State = HIGH;
+      relay2State = LOW;
+    }
+    else if (request->hasParam(PARAM_DOWN))
+    {
+      if(relay2State!=HIGH)
+       relayTimeLeftMs = RELAY_RUN_TIME_MS;
+      message.concat("Setting relay to high: DOWN");
+      relay1State = LOW;
+      relay2State = HIGH;
+    }
+    message.concat(", time left (ms) ");
+    message.concat(relayTimeLeftMs);
+    writeRelays();
   }
-  
+  else if (request->hasParam(PARAM_OFF))
+  {
+    message.concat("Switching relays off ");
+    relayTimeLeftMs = 0;
+    relay1State = LOW;
+    relay2State = LOW;
+    writeRelays();
+  }
+  else
+  {
+    message.concat("Did not find relay Paramater UP, DOWN or OFF");
+    message.concat(relayTimeLeftMs);
+  }
   Serial.println(message);
   request->send(200, "text/plain", message);
 }
@@ -293,6 +329,7 @@ void setupServer()
   server.on("/brightness", HTTP_GET, handleBrightness);
   server.on("/hue", HTTP_GET, handleHue);
   server.on("/sat", HTTP_GET, handleSat);
+  server.on("/pulse", HTTP_GET, handlePulse);
   server.on("/screen", HTTP_GET, handleScreenRequest);
   server.onNotFound(handleNotFound);
   server.begin();
@@ -343,22 +380,79 @@ void nextRelayState()
 };
 
 #define DELAY_TIME_MS 25
-void handleRelays(){
-  if(relayTimeLeftMs>0){
-    relayTimeLeftMs-=DELAY_TIME_MS;
-    if(relay1State==HIGH ||relay2State==HIGH){
-      if(relayTimeLeftMs<=0){
+void handleRelays()
+{
+  if (relayTimeLeftMs > 0)
+  {
+    relayTimeLeftMs -= DELAY_TIME_MS;
+    if (relay1State == HIGH || relay2State == HIGH)
+    {
+      if (relayTimeLeftMs <= 0)
+      {
         Serial.println("Switching off relays");
-        relay1State=LOW;
-        relay2State=LOW;
+        relay1State = LOW;
+        relay2State = LOW;
         writeRelays();
       }
     }
-   }
+  }
+}
+
+uint8 pulseCounter = 0;
+
+#define SCALE_FACTOR 0.2f
+#define SIN_STRETCH_FACTOR 0.05f
+#define COS_STRETCH_FACTOR -0.13f
+
+void xp_setBrightness()
+{
+
+  for (u_int16_t c = 0; c < strip.numPixels(); c++)
+  {
+    uint8_t mod_b = currentBrightness + currentBrightness * SCALE_FACTOR * sin(((float)(c + pulseCounter) * SIN_STRETCH_FACTOR)) + currentBrightness * SCALE_FACTOR * cos(((float)(c + pulseCounter) * COS_STRETCH_FACTOR));
+    strip.setPixelColor(c, Adafruit_NeoPixel::ColorHSV(currentHue, currentSat, mod_b));
+  }
+}
+
+void xp_setSat()
+{
+
+  for (u_int16_t c = 0; c < strip.numPixels(); c++)
+  {
+    uint8_t mod_sat = currentSat + currentSat * SCALE_FACTOR * sin(((float)(c + pulseCounter) * SIN_STRETCH_FACTOR)) + currentSat * SCALE_FACTOR * cos(((float)(c + pulseCounter) * COS_STRETCH_FACTOR));
+    strip.setPixelColor(c, Adafruit_NeoPixel::ColorHSV(currentHue, mod_sat, currentBrightness));
+  }
+}
+
+boolean up = true;
+
+void modPulseCounter()
+{
+
+  if (up && pulseCounter < 255)
+  {
+    pulseCounter++;
+  }
+  else
+  {
+    up = false;
+    pulseCounter--;
+    if (pulseCounter < 1)
+    {
+      up = true;
+    }
+  }
 }
 
 void loop()
 {
+  modPulseCounter();
+  if (pulse)
+  {
+    xp_setBrightness();
+    strip.show();
+  }
+
   delay(DELAY_TIME_MS);
   if (autoHue || autoSat)
   {
