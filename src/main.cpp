@@ -15,25 +15,14 @@
 #include <WiFiUdp.h>
 
 #define LED_PIN D3
-// DELETEIFNOLONGERNEEDED #define LED_TYPE    WS2811
-// #define LED_TYPE PL9823
-
-#define NUMLEDS 255
+#define NUMLEDS 256
 
 // Declare our NeoPixel strip object:
 Adafruit_NeoPixel strip(NUMLEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-// Argument 1 = Number of pixels in NeoPixel strip
-// Argument 2 = Arduino pin number (most are valid)
-// Argument 3 = Pixel type flags, add together as needed:
-//   NEO_KHZ800  800 KHz bitstream (most NeoPixel products w/WS2812 LEDs)
-//   NEO_KHZ400  400 KHz (classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
-//   NEO_GRB     Pixels are wired for GRB bitstream (most NeoPixel products)
-//   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
-//   NEO_RGBW    Pixels are wired for RGBW bitstream (NeoPixel RGBW products)
 
 uint32_t colorStore[NUMLEDS];
 
-#define BRIGHTNESS_INITIAL 0
+#define BRIGHTNESS_INITIAL 64
 #define BRIGHTNESS_MAX 255
 #define BRIGHTNESS_MIN 0
 
@@ -140,17 +129,33 @@ void handleAbsoluteBrightness(AsyncWebServerRequest *request, String message)
   request->send(200, "text/plain", message);
 }
 
+String toString(boolean b)
+{
+  return b ? "true" : "false";
+}
+
+boolean lampOn = false;
+
 void handleBrightness(AsyncWebServerRequest *request)
 {
   if (request->hasParam(PARAM_ON) || request->hasParam(PARAM_OFF) || request->hasParam(PARAM_TOGGLE))
   {
-    boolean on = request->hasParam(PARAM_ON);
-    if (request->hasParam(PARAM_TOGGLE))
+    if (request->hasParam(PARAM_ON))
     {
-      on = strip.getBrightness() == 0;
+      lampOn = true;
     }
-    String message = "Set brightness to: ";
-    if (on)
+    else if (request->hasParam(PARAM_OFF))
+    {
+      lampOn = false;
+    }
+    else if (request->hasParam(PARAM_TOGGLE))
+    {
+      lampOn = strip.getBrightness() == 0;
+    }
+    String message = "lampOn:";
+    message += toString(lampOn);
+    message += "\nSet brightness to: ";
+    if (lampOn)
     {
       restoreSavedColors();
       strip.setBrightness(currentBrightness);
@@ -166,7 +171,7 @@ void handleBrightness(AsyncWebServerRequest *request)
     Serial.println(message);
     request->send(200, "text/plain", message);
   }
-  if (request->hasParam(PARAM_VALUE))
+  else if (request->hasParam(PARAM_VALUE))
   {
     int value = request->getParam(PARAM_VALUE)->value().toInt();
     String message = "";
@@ -216,11 +221,6 @@ void handleBrightness(AsyncWebServerRequest *request)
     handleAbsoluteBrightness(request, "");
   }
   strip.show();
-}
-
-String toString(boolean b)
-{
-  return b ? "true" : "false";
 }
 
 void handleHue(AsyncWebServerRequest *request)
@@ -380,15 +380,31 @@ void setupServer()
   server.begin();
 }
 
+void startupTest()
+{
+  uint32_t colors[] = {Adafruit_NeoPixel::Color(255, 0, 0), Adafruit_NeoPixel::Color(0, 255, 0), Adafruit_NeoPixel::Color(0, 0, 255)};
+  for (int i = 0; i < NUMLEDS; i++)
+  {
+    strip.clear();
+    strip.setPixelColor(i, colors[i % 3]);
+    strip.show();
+    delay(5);
+  }
+  for (int i = NUMLEDS - 1; i >= 0; i--)
+  {
+    strip.clear();
+    strip.setPixelColor(i, colors[i % 3]);
+    strip.show();
+    delay(5);
+  }
+}
 void setupLights()
 {
   strip.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
-  strip.setBrightness(100);
-  strip.show();  // Turn OFF all pixels ASAP
+  startupTest();
+  strip.setBrightness(0);
   strip.clear();
-  strip.setBrightness(currentBrightness);
-  updateHueSat();
-  strip.show();
+  strip.show(); // Turn OFF all pixels ASAP
 }
 
 WiFiUDP ntpUDP;
