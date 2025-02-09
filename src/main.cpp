@@ -11,6 +11,8 @@
 #include "wifi_secrets.h"
 #include <Adafruit_NeoPixel.h>
 #include <pins_arduino.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
 #define LED_PIN D3
 // DELETEIFNOLONGERNEEDED #define LED_TYPE    WS2811
@@ -31,7 +33,7 @@ Adafruit_NeoPixel strip(NUMLEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 uint32_t colorStore[NUMLEDS];
 
-#define BRIGHTNESS_INITIAL 64
+#define BRIGHTNESS_INITIAL 0
 #define BRIGHTNESS_MAX 255
 #define BRIGHTNESS_MIN 0
 
@@ -58,6 +60,7 @@ boolean autoSat = false;
 
 #define AUTO_HUE_CHANGE_STEP 100
 #define AUTO_SAT_CHANGE_STEP 2
+#define PULSE_ON_STARTUP true
 
 void setupWifi()
 {
@@ -80,10 +83,14 @@ void setupWifi()
 #define PARAM_OFF "off"
 #define PARAM_TOGGLE "toggle"
 #define PARAM_AUTO "auto"
+#define PARAM_VALUE "value"
+String startupTime = "";
 
 void handleRoot(AsyncWebServerRequest *request)
 {
-  request->send(200, "text/plain", "Welcome to the picture light service.....");
+  String msg = "Welcome to the picture light service.....\n";
+  msg += "Up since: " + startupTime;
+  request->send(200, "text/plain", msg);
 }
 
 void handleNotFound(AsyncWebServerRequest *request)
@@ -123,6 +130,16 @@ void updateHueSat()
   }
 }
 
+void handleAbsoluteBrightness(AsyncWebServerRequest *request, String message)
+{
+  strip.setBrightness(currentBrightness);
+  message.concat("Set brightness to: ");
+  message.concat(currentBrightness);
+  message.concat("\n");
+  Serial.print(message);
+  request->send(200, "text/plain", message);
+}
+
 void handleBrightness(AsyncWebServerRequest *request)
 {
   if (request->hasParam(PARAM_ON) || request->hasParam(PARAM_OFF) || request->hasParam(PARAM_TOGGLE))
@@ -149,12 +166,44 @@ void handleBrightness(AsyncWebServerRequest *request)
     Serial.println(message);
     request->send(200, "text/plain", message);
   }
+  if (request->hasParam(PARAM_VALUE))
+  {
+    int value = request->getParam(PARAM_VALUE)->value().toInt();
+    String message = "";
+
+    if (value > BRIGHTNESS_MAX)
+    {
+      message.concat("Requested value to high:");
+      message.concat(value);
+      message.concat(", set to: ");
+      message.concat(BRIGHTNESS_MAX);
+      message.concat("\n");
+      value = BRIGHTNESS_MAX;
+    }
+    else if (value < BRIGHTNESS_MIN)
+    {
+
+      message.concat("Requested value to low:");
+      message.concat(value);
+      message.concat(", set to: ");
+      message.concat(BRIGHTNESS_MIN);
+      message.concat("\n");
+      value = BRIGHTNESS_MIN;
+    }
+
+    currentBrightness = value;
+
+    handleAbsoluteBrightness(request, message);
+  }
   else
   {
     uint8_t step = 1;
-    if (request->hasParam(PARAM_STEP) && currentBrightness + step <= BRIGHTNESS_MAX)
+    String msg = "";
+    if (request->hasParam(PARAM_STEP))
     {
       step = request->getParam(PARAM_STEP)->value().toInt();
+      msg += "Step:";
+      msg += step;
     }
     if (request->hasParam(PARAM_UP) && currentBrightness + step <= BRIGHTNESS_MAX)
     {
@@ -164,11 +213,7 @@ void handleBrightness(AsyncWebServerRequest *request)
     {
       currentBrightness -= step;
     }
-    strip.setBrightness(currentBrightness);
-    String message = "Set brightness to: ";
-    message.concat(currentBrightness);
-    Serial.println(message);
-    request->send(200, "text/plain", message);
+    handleAbsoluteBrightness(request, "");
   }
   strip.show();
 }
@@ -245,7 +290,7 @@ void handleSat(AsyncWebServerRequest *request)
   strip.show();
 }
 
-boolean pulse = false;
+boolean pulse = PULSE_ON_STARTUP;
 
 void handlePulse(AsyncWebServerRequest *request)
 {
@@ -288,16 +333,16 @@ void handleScreenRequest(AsyncWebServerRequest *request)
 
     if (request->hasParam(PARAM_UP))
     {
-      if(relay1State!=HIGH)
-       relayTimeLeftMs = RELAY_RUN_TIME_MS;
+      if (relay1State != HIGH)
+        relayTimeLeftMs = RELAY_RUN_TIME_MS;
       message.concat("Setting relay to high: UP");
       relay1State = HIGH;
       relay2State = LOW;
     }
     else if (request->hasParam(PARAM_DOWN))
     {
-      if(relay2State!=HIGH)
-       relayTimeLeftMs = RELAY_RUN_TIME_MS;
+      if (relay2State != HIGH)
+        relayTimeLeftMs = RELAY_RUN_TIME_MS;
       message.concat("Setting relay to high: DOWN");
       relay1State = LOW;
       relay2State = HIGH;
@@ -338,12 +383,28 @@ void setupServer()
 void setupLights()
 {
   strip.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
+  strip.setBrightness(100);
   strip.show();  // Turn OFF all pixels ASAP
   strip.clear();
   strip.setBrightness(currentBrightness);
   updateHueSat();
   strip.show();
 }
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+String weekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+void registerStartTime()
+{
+  timeClient.begin();
+  timeClient.update();
+  startupTime = weekdays[timeClient.getDay() % 7];
+  startupTime += ", ";
+  startupTime += timeClient.getFormattedTime();
+  startupTime += " (UTC))";
+  timeClient.end();
+};
 
 void setup()
 {
@@ -354,7 +415,9 @@ void setup()
   setupWifi();
   setupServer();
   setupLights();
+  registerStartTime();
   Serial.println("Setup done");
+  Serial.println(startupTime);
 }
 
 void nextRelayState()
